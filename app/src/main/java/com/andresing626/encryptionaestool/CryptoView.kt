@@ -1,4 +1,3 @@
-
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -17,13 +16,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import com.snapcompany.snapsafe.utilities.AESEncryption
+import android.os.Build
+import androidx.annotation.RequiresApi
 
+@RequiresApi(Build.VERSION_CODES.O)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CryptoView() {
@@ -33,6 +34,7 @@ fun CryptoView() {
     var plainText by remember { mutableStateOf("") }
     var encryptedTextResult by remember { mutableStateOf("") }
     var decryptedTextResult by remember { mutableStateOf("") }
+    var fullQrContent by remember { mutableStateOf("") }  // Contenido completo del QR
     var lastGeneratedIv by remember { mutableStateOf<ByteArray?>(null) }
 
     Scaffold(
@@ -73,13 +75,24 @@ fun CryptoView() {
                 )
             }
 
+            // Botón para CIFRAR y generar QR (formato completo)
             Button(
                 onClick = {
                     if (plainText.isNotBlank()) {
                         val iv = aes.generateIv()
                         lastGeneratedIv = iv
                         val encrypted = aes.encryptStringWithSharedKey(plainText, fixedSecretKey, iv)
-                        encryptedTextResult = encrypted ?: "Error al cifrar"
+
+                        if (encrypted != null) {
+                            encryptedTextResult = encrypted
+                            // 🔑 FORMATO COMPATIBLE CON ControlModel.decryptQrData()
+                            // Usamos espacio como separador (como espera qrCodeToGateData)
+                            val ivBase64 = aes.byteArrayToString(iv)
+                            fullQrContent = "$encrypted $ivBase64"  // ← Espacio como separador
+                        } else {
+                            encryptedTextResult = "Error al cifrar"
+                            fullQrContent = ""
+                        }
                         decryptedTextResult = ""
                     }
                 },
@@ -93,12 +106,12 @@ fun CryptoView() {
                 Text("Cifrar y Generar QR", fontWeight = FontWeight.Bold)
             }
 
-            // --- BLOQUE 2: RESULTADO CIFRADO & CÓDIGO QR ---
-            if (encryptedTextResult.isNotEmpty() && encryptedTextResult != "Error al cifrar") {
+            // --- BLOQUE 2: QR Y RESULTADO CIFRADO ---
+            if (fullQrContent.isNotEmpty() && encryptedTextResult != "Error al cifrar") {
 
-                // Mostrar Código QR del texto encriptado
+                // Mostrar Código QR con el contenido completo
                 Text(
-                    text = "CÓDIGO QR GENERADO (CONTENIDO ENCRIPTADO)",
+                    text = "CÓDIGO QR (CONTENIDO: CIFRADO + IV)",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
@@ -114,70 +127,133 @@ fun CryptoView() {
                     contentAlignment = Alignment.Center
                 ) {
                     QrCodeView(
-                        content = encryptedTextResult,
+                        content = fullQrContent,  // ← QR con formato completo
                         modifier = Modifier.fillMaxSize(),
                         qrColor = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                 }
 
+                // Tarjeta informativa
                 Card(
                     shape = RoundedCornerShape(12.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            text = "String encriptado (Base64) en el QR:",
+                            text = "📦 CONTENIDO COMPLETO DEL QR:",
                             fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            text = encryptedTextResult,
+                            text = fullQrContent,
                             color = MaterialTheme.colorScheme.primary,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold
+                            fontSize = 11.sp,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
+
+                        Divider()
+
+                        Text(
+                            text = "🔐 PARTE 1 (Cifrado Base64):",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = fullQrContent.substringBefore(" ").take(80) + "...",
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
+
+                        Text(
+                            text = "🔑 PARTE 2 (IV Base64):",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = fullQrContent.substringAfter(" "),
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
                         )
                     }
                 }
 
+                // Botón para descifrar usando el contenido del QR
                 Button(
                     onClick = {
-                        val iv = lastGeneratedIv
-                        if (iv != null) {
-                            val decrypted = aes.decryptStringWithSharedKey(encryptedTextResult, fixedSecretKey, iv)
-                            decryptedTextResult = decrypted ?: "Error al descifrar (Tag inválido)"
+                        try {
+                            // Extraer el IV del contenido completo del QR
+                            val parts = fullQrContent.split(" ")
+                            if (parts.size == 2) {
+                                val cipherText = parts[0]
+                                val ivBase64 = parts[1]
+                                val iv = aes.stringToByteArray(ivBase64)
+                                val decrypted = aes.decryptStringWithSharedKey(cipherText, fixedSecretKey, iv)
+                                decryptedTextResult = decrypted ?: "Error al descifrar (Tag inválido)"
+                            } else {
+                                decryptedTextResult = "Formato de QR inválido"
+                            }
+                        } catch (e: Exception) {
+                            decryptedTextResult = "Error: ${e.message}"
                         }
                     },
                     modifier = Modifier.fillMaxWidth().height(50.dp),
                     shape = RoundedCornerShape(25.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        contentColor = MaterialTheme.colorScheme.onSurface
+                        containerColor = MaterialTheme.colorScheme.secondary,
+                        contentColor = MaterialTheme.colorScheme.onSecondary
                     )
                 ) {
-                    Text("Descifrar desde memoria", fontWeight = FontWeight.Medium)
+                    Text("🔓 Descifrar desde QR", fontWeight = FontWeight.Medium)
                 }
             }
 
             // --- BLOQUE 3: TEXTO RECUPERADO ---
-            if (decryptedTextResult.isNotEmpty()) {
+            if (decryptedTextResult.isNotEmpty() && decryptedTextResult != "Error al descifrar (Tag inválido)") {
                 Card(
                     shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text(
-                            text = "MENSAJE ORIGINAL RECUPERADO:",
+                            text = "✅ MENSAJE ORIGINAL RECUPERADO:",
                             fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Spacer(modifier = Modifier.height(4.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
                         Text(
                             text = decryptedTextResult,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
                             fontWeight = FontWeight.Bold,
                             fontSize = 16.sp
+                        )
+                    }
+                }
+            } else if (decryptedTextResult == "Error al descifrar (Tag inválido)") {
+                Card(
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "❌ ERROR DE DESCRIFRADO",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "El IV o la clave no coinciden con los usados en el cifrado.",
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            fontSize = 14.sp
                         )
                     }
                 }
@@ -191,12 +267,12 @@ fun CryptoView() {
 fun QrCodeView(
     content: String,
     modifier: Modifier = Modifier,
-    qrColor: Color = Color.Black
+    qrColor: Color = Color.Black,
+    backgroundColor: Color = Color.White
 ) {
     val qrCodeMatrix = remember(content) {
         try {
             val writer = QRCodeWriter()
-            // Codifica el contenido encriptado en una matriz binaria de ZXing
             writer.encode(content, BarcodeFormat.QR_CODE, 512, 512)
         } catch (e: Exception) {
             null
@@ -204,26 +280,37 @@ fun QrCodeView(
     }
 
     if (qrCodeMatrix != null) {
-        Canvas(modifier = modifier) {
+        Canvas(modifier = modifier.background(backgroundColor)) {
             val matrixWidth = qrCodeMatrix.width
             val matrixHeight = qrCodeMatrix.height
 
-            // Calculamos el tamaño proporcional de cada píxel ("módulo") en el Canvas
             val pixelWidth = size.width / matrixWidth
             val pixelHeight = size.height / matrixHeight
 
             for (x in 0 until matrixWidth) {
                 for (y in 0 until matrixHeight) {
-                    // Si el bit es verdadero, se dibuja un cuadrado
                     if (qrCodeMatrix.get(x, y)) {
                         drawRect(
                             color = qrColor,
                             topLeft = Offset(x * pixelWidth, y * pixelHeight),
-                            size = Size(pixelWidth + 0.5f, pixelHeight + 0.5f) // El +0.5f evita líneas de separación por redondeo
+                            size = Size(pixelWidth + 0.5f, pixelHeight + 0.5f)
                         )
                     }
                 }
             }
+        }
+    } else {
+        Box(
+            modifier = modifier
+                .background(MaterialTheme.colorScheme.errorContainer)
+                .padding(16.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "Error generando QR",
+                color = MaterialTheme.colorScheme.error,
+                fontSize = 12.sp
+            )
         }
     }
 }

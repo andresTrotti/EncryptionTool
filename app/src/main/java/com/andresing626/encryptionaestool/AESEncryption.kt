@@ -1,6 +1,8 @@
 package com.snapcompany.snapsafe.utilities
 
+import android.os.Build
 import android.util.Log
+import androidx.annotation.RequiresApi
 import java.security.SecureRandom
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
@@ -17,14 +19,17 @@ class AESEncryption {
         return iv
     }
 
+    @RequiresApi(Build.VERSION_CODES.O)
     fun byteArrayToString(byteArray: ByteArray): String {
         return Base64.getEncoder().encodeToString(byteArray)
     }
 
+    @RequiresApi(Build.VERSION_CODES.O)
     fun stringToByteArray(base64String: String): ByteArray {
         return Base64.getDecoder().decode(base64String)
     }
 
+    @RequiresApi(Build.VERSION_CODES.O)
     fun encryptStringWithSharedKey(plainText: String, secretKeyBytes: ByteArray, ivBytes: ByteArray): String? {
         try {
             val secretKey = SecretKeySpec(secretKeyBytes, "AES")
@@ -42,6 +47,7 @@ class AESEncryption {
 
 
 
+    @RequiresApi(Build.VERSION_CODES.O)
     fun decryptStringWithSharedKey(cipherTextBase64: String, secretKeyBytes: ByteArray, ivBytes: ByteArray): String? {
         try {
             val secretKey = SecretKeySpec(secretKeyBytes, "AES")
